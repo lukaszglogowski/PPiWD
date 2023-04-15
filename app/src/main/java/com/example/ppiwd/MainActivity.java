@@ -9,13 +9,16 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.IBinder;
 import android.util.Log;
 import android.view.View;
+import android.widget.Toast;
 
 
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.mbientlab.metawear.Data;
 import com.mbientlab.metawear.MetaWearBoard;
@@ -27,7 +30,7 @@ import com.mbientlab.metawear.builder.RouteComponent;
 import com.mbientlab.metawear.data.Acceleration;
 import com.mbientlab.metawear.data.AngularVelocity;
 import com.mbientlab.metawear.module.Accelerometer;
-import com.mbientlab.metawear.module.GyroBmi160;
+import com.mbientlab.metawear.module.Gyro;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -39,6 +42,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Array;
+import java.util.Arrays;
 
 import bolts.Continuation;
 import bolts.Task;
@@ -56,11 +61,11 @@ public class MainActivity extends Activity implements ServiceConnection {
 
     private BtleService.LocalBinder serviceBinder;
     //< Adres MAC urządzenia, żeby korzystać z własnego trzeba go zmienić
-    private final String MW_MAC_ADDRESS= "E1:15:73:BF:22:D1";
+    private final String MW_MAC_ADDRESS= "CF:F6:45:22:49:A9";
     //< Deklaracje akcelerometru i żyroskopu
     private MetaWearBoard board;
     private Accelerometer accelerometer;
-    private GyroBmi160 gyroBmi160;
+    private Gyro gyroscope;
     //< Deklaracje obiektów JSONa
     private JSONObject deviceData;
     private JSONArray dataArray;
@@ -73,36 +78,47 @@ public class MainActivity extends Activity implements ServiceConnection {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        View startButton = findViewById(R.id.start);
+        View stopButton = findViewById(R.id.stop);
+        View saveButton = findViewById(R.id.save);
+        startButton.setEnabled(false);
+        stopButton.setEnabled(false);
+        saveButton.setEnabled(false);
+
         ///< Bind the service when the activity is created
         getApplicationContext().bindService(new Intent(this, BtleService.class),
                 this, Context.BIND_AUTO_CREATE);
 
         //< Ten przycisk rozpoczyna pomiary
-        findViewById(R.id.start).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                accelerometer.acceleration().start();
-                gyroBmi160.angularVelocity().start();
-                accelerometer.start();
-                gyroBmi160.start();
-            }
+        startButton.setOnClickListener(view -> {
+            startButton.setEnabled(false);
+            stopButton.setEnabled(true);
+            saveButton.setEnabled(true);
+            accelerometer.acceleration().start();
+            gyroscope.angularVelocity().start();
+            accelerometer.start();
+            gyroscope.start();
         });
         //< Ten przycisk kończy pomiary
-        findViewById(R.id.stop).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                gyroBmi160.stop();
-                accelerometer.stop();
-                gyroBmi160.angularVelocity().stop();
-                accelerometer.acceleration().stop();
-            }
+        stopButton.setOnClickListener(view -> {
+            stopButton.setEnabled(false);
+            startButton.setEnabled(true);
+            gyroscope.stop();
+            accelerometer.stop();
+            gyroscope.angularVelocity().stop();
+            accelerometer.acceleration().stop();
         });
         //< Ten przycisk zapisuje pomiary do JSONa
-        findViewById(R.id.save).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
+        saveButton.setOnClickListener(view -> {
+            // Próbowałem kombinować z prośbą o uprawnienia w trakcie działania aplikacji, MOŻE do tego wrócę
+            // Context context = getApplicationContext();
+            // if(ContextCompat.checkSelfPermission(context,
+            //        Manifest.permission.MANAGE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
                 writeToJson();
-            }
+            // } else {
+            //    ActivityCompat.requestPermissions(MainActivity.this,
+            //            new String[]{Manifest.permission.MANAGE_EXTERNAL_STORAGE}, 1);
+            // }
         });
     }
 
@@ -176,12 +192,13 @@ public class MainActivity extends Activity implements ServiceConnection {
                                 //Log.i("ppiwd", "Accel: " + data.value(Acceleration.class).toString());
 
                                 try {
-                                    JSONArray accel = new JSONArray();
-                                    accel.put(data.value(Acceleration.class).toString());
+                                    Acceleration accel = data.value(Acceleration.class);
+                                    float[] accelData = new float[]{accel.x(), accel.y(), accel.z()};
+                                    dataArray2 = new JSONObject();
 
                                     //< Dane z Accel do JSONa
                                     // Accel trochę się tnie i nie ma go w pierwszych 2-3 obiektach, potem ok
-                                    dataArray2.put("accel", accel);
+                                    dataArray2.put("accel", Arrays.toString(accelData));
                                 } catch (Exception e) {
                                     e.printStackTrace();
                                 }
@@ -195,8 +212,11 @@ public class MainActivity extends Activity implements ServiceConnection {
             public Void then(Task<Route> task) throws Exception {
                 if (task.isFaulted()) {
                     Log.w("ppiwd", "Failed to configure app", task.getError());
+                    Toast.makeText(MainActivity.this,
+                            "Error while configuring MetaWear device", Toast.LENGTH_LONG).show();
                 } else {
                     Log.i("ppiwd", "App configured");
+                    findViewById(R.id.start).setEnabled(true);
                 }
 
                 return null;
@@ -205,11 +225,11 @@ public class MainActivity extends Activity implements ServiceConnection {
             @Override
             public Task<Route> then(Task<Void> task) throws Exception {
                 //< Tutaj też zostawiłem 25Hz, zmienić na ODR_50_HZ albo coś innego
-                gyroBmi160 = board.getModule(GyroBmi160.class);
-                gyroBmi160.configure()
-                        .odr(GyroBmi160.OutputDataRate.ODR_25_HZ)
+                gyroscope = board.getModule(Gyro.class);
+                gyroscope.configure()
+                        .odr(Gyro.OutputDataRate.ODR_25_HZ)
                         .commit();
-                return gyroBmi160.angularVelocity().addRouteAsync(new RouteBuilder() {
+                return gyroscope.angularVelocity().addRouteAsync(new RouteBuilder() {
                     @Override
                     public void configure(RouteComponent routeComponent) {
                         routeComponent.stream(new Subscriber() {
@@ -220,13 +240,15 @@ public class MainActivity extends Activity implements ServiceConnection {
 
                                 try {
                                     Long tsLong = System.currentTimeMillis();
-                                    String ts = tsLong.toString();
-                                    JSONArray gyro = new JSONArray();
+                                    StringBuilder tsb = new StringBuilder(tsLong.toString());
+                                    tsb = tsb.insert(tsb.length() - 3, '.');
+                                    String ts = tsb.toString();
 
                                     //< Dane z timestamp i Gyro do JSONa
-                                    gyro.put(data.value(AngularVelocity.class).toString());
+                                    AngularVelocity gyro = data.value(AngularVelocity.class);
+                                    float[] gyroData = {gyro.x(), gyro.y(), gyro.z()};
                                     dataArray2.put("timestamp", ts);
-                                    dataArray2.put("gyro", gyro);
+                                    dataArray2.put("gyro", Arrays.toString(gyroData));
                                     dataArray.put(dataArray2);
                                     deviceData.put("data", dataArray);
                                 } catch (Exception e) {
@@ -249,15 +271,20 @@ public class MainActivity extends Activity implements ServiceConnection {
     tak, bo ciągle powtaża się pierwszy obiekt. */
     public void writeToJson() {
         final String filename = "data.json";
-        String fileContents = deviceData.toString();
+        String fileContents;
+        try {
+            fileContents = deviceData.toString(4);
+        } catch (JSONException ignored) {
+            fileContents = deviceData.toString();
+        }
         FileOutputStream outputStream;
 
-        /*File sourceLocation = new File("/data/data/com.example.ppiwd/files/data.json");
-        String sdCard = Environment.getExternalStorageDirectory().getAbsolutePath();
-        File targetLocation = new File(sdCard, "data.json");
+        File sourceLocation = new File(MainActivity.this.getFilesDir(), filename);
+        File sdCard = getExternalFilesDir("MetaWearData");
+        File targetLocation = new File(sdCard, filename);
 
         Log.v("ppiwd", "sourceLocation: " + sourceLocation);
-        Log.v("ppiwd", "targetLocation: " + targetLocation);*/
+        Log.v("ppiwd", "targetLocation: " + targetLocation);
 
         //< Zapis JSONa do pamięci wewnętrznej apki
         try {
@@ -266,7 +293,7 @@ public class MainActivity extends Activity implements ServiceConnection {
             outputStream.close();
             Log.i("ppiwd", "File saved: " + filename);
 
-            /*InputStream in = new FileInputStream(sourceLocation);
+            InputStream in = new FileInputStream(sourceLocation);
             OutputStream out = new FileOutputStream(targetLocation);
 
             // Copy the bits from instream to outstream
@@ -278,7 +305,7 @@ public class MainActivity extends Activity implements ServiceConnection {
             }
 
             in.close();
-            out.close();*/
+            out.close();
         } catch (IOException e) {
             e.printStackTrace();
         }

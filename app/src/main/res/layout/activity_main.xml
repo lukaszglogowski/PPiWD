@@ -7,6 +7,7 @@
     tools:context=".MainActivity">
 
     <TextView
+        android:id="@+id/textView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Hello World!"
@@ -19,26 +20,34 @@
         android:id="@+id/start"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Start"
-        tools:layout_editor_absoluteX="54dp"
-        tools:layout_editor_absoluteY="67dp" />
+        android:layout_marginStart="32dp"
+        android:enabled="false"
+        android:text="@string/start"
+        app:layout_constraintBottom_toTopOf="@+id/stop"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
     <Button
         android:id="@+id/stop"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Stop"
-        tools:layout_editor_absoluteX="259dp"
-        tools:layout_editor_absoluteY="67dp"
-        app:layout_constraintTop_toBottomOf="@id/start" />
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="8dp"
+        android:enabled="false"
+        android:text="@string/stop"
+        app:layout_constraintBottom_toTopOf="@+id/save"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <Button
         android:id="@+id/save"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Save"
-        tools:layout_editor_absoluteX="255dp"
-        tools:layout_editor_absoluteY="194dp"
-        app:layout_constraintTop_toBottomOf="@id/stop" />
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="32dp"
+        android:enabled="false"
+        android:text="@string/save"
+        app:layout_constraintBottom_toTopOf="@+id/textView"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
