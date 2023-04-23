@@ -3,4 +3,11 @@
     <string name="start">Start</string>
     <string name="stop">Stop</string>
     <string name="save">Save</string>
+    <string name="select_current_activity">Select current activity</string>
+    <string name="working">Working</string>
+    <string name="walking">Walking</string>
+    <string name="in_place_running">In place running</string>
+    <string name="forward_folding">Forward folding</string>
+    <string name="jumping_jacks">Jumping jacks</string>
+    <string name="squats">Squats</string>
 </resources>

@@ -1,7 +1,6 @@
 package com.example.ppiwd;
 
 
-import android.Manifest;
 import android.app.Activity;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
@@ -9,24 +8,19 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.util.Log;
 import android.view.View;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.Toast;
 
 
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
-import com.mbientlab.metawear.Data;
 import com.mbientlab.metawear.MetaWearBoard;
 import com.mbientlab.metawear.Route;
 import com.mbientlab.metawear.Subscriber;
 import com.mbientlab.metawear.android.BtleService;
-import com.mbientlab.metawear.builder.RouteBuilder;
-import com.mbientlab.metawear.builder.RouteComponent;
 import com.mbientlab.metawear.data.Acceleration;
 import com.mbientlab.metawear.data.AngularVelocity;
 import com.mbientlab.metawear.module.Accelerometer;
@@ -42,11 +36,10 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Array;
 import java.util.Arrays;
 
 import bolts.Continuation;
-import bolts.Task;
+
 
 
 /*   !!!!!!!!!!! WAŻNE !!!!!!!!!!!!!
@@ -61,7 +54,7 @@ public class MainActivity extends Activity implements ServiceConnection {
 
     private BtleService.LocalBinder serviceBinder;
     //< Adres MAC urządzenia, żeby korzystać z własnego trzeba go zmienić
-    private final String MW_MAC_ADDRESS= "CF:F6:45:22:49:A9";
+    private final String MW_MAC_ADDRESS= "E1:15:73:BF:22:D1";
     //< Deklaracje akcelerometru i żyroskopu
     private MetaWearBoard board;
     private Accelerometer accelerometer;
@@ -70,8 +63,11 @@ public class MainActivity extends Activity implements ServiceConnection {
     private JSONObject deviceData;
     private JSONArray dataArray;
     private JSONObject dataArray2;
-
-
+    //< Przechowuje info czy któraś z opcji ćwiczeń jest wybrana
+    private boolean checked = false;
+    //< Deklaracje obiektów radioButton'ów
+    private RadioGroup radioGroup;
+    private RadioButton radioButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,7 +77,7 @@ public class MainActivity extends Activity implements ServiceConnection {
         View startButton = findViewById(R.id.start);
         View stopButton = findViewById(R.id.stop);
         View saveButton = findViewById(R.id.save);
-        startButton.setEnabled(false);
+        startButton.setEnabled(true);
         stopButton.setEnabled(false);
         saveButton.setEnabled(false);
 
@@ -89,11 +85,11 @@ public class MainActivity extends Activity implements ServiceConnection {
         getApplicationContext().bindService(new Intent(this, BtleService.class),
                 this, Context.BIND_AUTO_CREATE);
 
+
         //< Ten przycisk rozpoczyna pomiary
         startButton.setOnClickListener(view -> {
             startButton.setEnabled(false);
             stopButton.setEnabled(true);
-            saveButton.setEnabled(true);
             accelerometer.acceleration().start();
             gyroscope.angularVelocity().start();
             accelerometer.start();
@@ -101,8 +97,9 @@ public class MainActivity extends Activity implements ServiceConnection {
         });
         //< Ten przycisk kończy pomiary
         stopButton.setOnClickListener(view -> {
-            stopButton.setEnabled(false);
             startButton.setEnabled(true);
+            stopButton.setEnabled(false);
+            saveButton.setEnabled(true);
             gyroscope.stop();
             accelerometer.stop();
             gyroscope.angularVelocity().stop();
@@ -114,7 +111,25 @@ public class MainActivity extends Activity implements ServiceConnection {
             // Context context = getApplicationContext();
             // if(ContextCompat.checkSelfPermission(context,
             //        Manifest.permission.MANAGE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+
+            // Tutaj uzyskuje się dostep do wyboru ćwiczeń
+            radioGroup = findViewById(R.id.radioGroup);
+            int id = radioGroup.getCheckedRadioButtonId();
+            radioButton = findViewById(id);
+
+            /* Tutaj korzystamy z "checked" żeby sprawdzić czy użytkownik wybrał ćwicznie, jeśli
+            * tak to dajemy jego nazwę do JSONa, jako "type", jeśli nie dajemy "Unspecified" */
+            try {
+                if (checked) {
+                    deviceData.put("type", radioButton.getText());
+                } else {
+                    deviceData.put("type", "Unspecified");
+                }
                 writeToJson();
+            } catch (JSONException e) {
+                throw new RuntimeException(e);
+            }
+
             // } else {
             //    ActivityCompat.requestPermissions(MainActivity.this,
             //            new String[]{Manifest.permission.MANAGE_EXTERNAL_STORAGE}, 1);
@@ -167,116 +182,99 @@ public class MainActivity extends Activity implements ServiceConnection {
         // Create a MetaWear board object for the Bluetooth Device
         board = serviceBinder.getMetaWearBoard(remoteDevice);
 
-        board.connectAsync().onSuccessTask(new Continuation<Void, Task<Route>>() {
-            @Override
-            public Task<Route> then(Task<Void> task) throws Exception {
-                //< Sprawdzanie czy telefon i czujnik się połączyły
-                if (task.isFaulted()) {
-                    Log.i("ppiwd", "Failed to connect");
-                } else {
-                    Log.i("ppiwd", "Connected to " + macAdress);
+        board.connectAsync().onSuccessTask(task -> {
+            //< Sprawdzanie czy telefon i czujnik się połączyły
+            if (task.isFaulted()) {
+                Log.i("ppiwd", "Failed to connect");
+            } else {
+                Log.i("ppiwd", "Connected to " + macAdress);
+            }
+
+            //< Zbieramy dane z akcelerometru
+            accelerometer = board.getModule(Accelerometer.class);
+            accelerometer.configure()
+                    .odr(50f)       // Set sampling frequency to 50Hz, or closest valid ODR
+                    .commit();
+            return accelerometer.acceleration().addRouteAsync(source -> source.stream((Subscriber) (data, env) -> {
+                //< Odkomentować jeśli chce się zobaczyć dane Accel w Logcat
+                //Log.i("ppiwd", "Accel: " + data.value(Acceleration.class).toString());
+
+                try {
+                    Acceleration accel = data.value(Acceleration.class);
+                    float[] accelData = new float[]{accel.x(), accel.y(), accel.z()};
+                    dataArray2 = new JSONObject();
+
+                    long tsLong = System.currentTimeMillis();
+                    StringBuilder tsb = new StringBuilder(Long.toString(tsLong));
+                    tsb = tsb.insert(tsb.length() - 3, '.');
+                    String ts = tsb.toString();
+
+                    //< Dane z timestamp i Accel do JSONa
+                    // Accel trochę się tnie i nie ma go w pierwszych 2-3 obiektach, potem ok
+                    dataArray2.put("timestamp", ts);
+                    dataArray2.put("accel", Arrays.toString(accelData));
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }));
+        }).continueWith((Continuation<Route, Void>) task -> {
+            //< Sprawdzenie czy apka jest skonfigurowana, wykonuje się przed akceleratorem
+            if (task.isFaulted()) {
+                Log.w("ppiwd", "Failed to configure app", task.getError());
+                Toast.makeText(MainActivity.this,
+                        "Error while configuring MetaWear device", Toast.LENGTH_LONG).show();
+            } else {
+                Log.i("ppiwd", "App configured");
+                findViewById(R.id.start).setEnabled(true);
+            }
+
+            return null;
+        }).continueWith(task -> {
+            //< Zbieramy dane z żyroskopu
+            gyroscope = board.getModule(Gyro.class);
+            gyroscope.configure()
+                    .odr(Gyro.OutputDataRate.ODR_50_HZ)
+                    .commit();
+            return gyroscope.angularVelocity().addRouteAsync(routeComponent -> routeComponent.stream((Subscriber) (data, env) -> {
+                //< Odkomentować jeśli chce się zobaczyć dane Gyro w Logcat
+                //Log.i("ppiwd", "Gyro:" + data.value(AngularVelocity.class).toString());
+
+                try {
+                    //< Dane z Gyro do JSONa
+                    AngularVelocity gyro = data.value(AngularVelocity.class);
+                    float[] gyroData = {gyro.x(), gyro.y(), gyro.z()};
+
+                    dataArray2.put("gyro", Arrays.toString(gyroData));
+                    dataArray.put(dataArray2);
+                    deviceData.put("data", dataArray);
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
 
-                //< Zostawiłem 25Hz bo to dane i tak szybko lecą, można zmienić
-                accelerometer = board.getModule(Accelerometer.class);
-                accelerometer.configure()
-                        .odr(25f)       // Set sampling frequency to 25Hz, or closest valid ODR
-                        .commit();
-                return accelerometer.acceleration().addRouteAsync(new RouteBuilder() {
-                    @Override
-                    public void configure(RouteComponent source) {
-                        source.stream(new Subscriber() {
-                            @Override
-                            public void apply(Data data, Object... env) {
-                                //< Odkomentować jeśli chce się zobaczyć dane Accel w Logcat
-                                //Log.i("ppiwd", "Accel: " + data.value(Acceleration.class).toString());
-
-                                try {
-                                    Acceleration accel = data.value(Acceleration.class);
-                                    float[] accelData = new float[]{accel.x(), accel.y(), accel.z()};
-                                    dataArray2 = new JSONObject();
-
-                                    //< Dane z Accel do JSONa
-                                    // Accel trochę się tnie i nie ma go w pierwszych 2-3 obiektach, potem ok
-                                    dataArray2.put("accel", Arrays.toString(accelData));
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-        }).continueWith(new Continuation<Route, Void>() {
-            @Override
-            public Void then(Task<Route> task) throws Exception {
-                if (task.isFaulted()) {
-                    Log.w("ppiwd", "Failed to configure app", task.getError());
-                    Toast.makeText(MainActivity.this,
-                            "Error while configuring MetaWear device", Toast.LENGTH_LONG).show();
-                } else {
-                    Log.i("ppiwd", "App configured");
-                    findViewById(R.id.start).setEnabled(true);
-                }
-
-                return null;
-            }
-        }).continueWith(new Continuation<Void, Task<Route>>() {
-            @Override
-            public Task<Route> then(Task<Void> task) throws Exception {
-                //< Tutaj też zostawiłem 25Hz, zmienić na ODR_50_HZ albo coś innego
-                gyroscope = board.getModule(Gyro.class);
-                gyroscope.configure()
-                        .odr(Gyro.OutputDataRate.ODR_25_HZ)
-                        .commit();
-                return gyroscope.angularVelocity().addRouteAsync(new RouteBuilder() {
-                    @Override
-                    public void configure(RouteComponent routeComponent) {
-                        routeComponent.stream(new Subscriber() {
-                            @Override
-                            public void apply(Data data, Object... env) {
-                                //< Odkomentować jeśli chce się zobaczyć dane Gyro w Logcat
-                                //Log.i("ppiwd", "Gyro:" + data.value(AngularVelocity.class).toString());
-
-                                try {
-                                    Long tsLong = System.currentTimeMillis();
-                                    StringBuilder tsb = new StringBuilder(tsLong.toString());
-                                    tsb = tsb.insert(tsb.length() - 3, '.');
-                                    String ts = tsb.toString();
-
-                                    //< Dane z timestamp i Gyro do JSONa
-                                    AngularVelocity gyro = data.value(AngularVelocity.class);
-                                    float[] gyroData = {gyro.x(), gyro.y(), gyro.z()};
-                                    dataArray2.put("timestamp", ts);
-                                    dataArray2.put("gyro", Arrays.toString(gyroData));
-                                    dataArray.put(dataArray2);
-                                    deviceData.put("data", dataArray);
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-
-                                //< Skończony JSON w pełnej glorii i chwale, w Logcat
-                                Log.i("ppiwd", deviceData.toString());
-                            }
-                        });
-                    }
-                });
-            }
+                //< Skończony JSON w pełnej glorii i chwale, można sprawdzić w Logcat
+                //Log.i("ppiwd", deviceData.toString());
+            }));
         });
     }
 
-    /*< Zapisywanie JSONa do pamięci telefonu, niestety z automatu idzie do wewnętrznej
-    pamięci aplikacji i nie da się go tam podejrzeć ani z poziomu telefonu dostać do niego.
-    Zakomentowany kod kopiuje plik do pamięci zewnętrzej telefonu ale coś jest z nim nie
-    tak, bo ciągle powtaża się pierwszy obiekt. */
-    public void writeToJson() {
-        final String filename = "data.json";
+    /*< Zapisywanie JSONa do pamięci telefonu, pliki można znaleźć w pamięci
+    * wenętrznej, Android -> data -> com.example.ppiwd -> files -> MetaWearData */
+    public void writeToJson() throws JSONException {
+        //< default'owa nazwa JSONa
+        String filename = "data.json";
+
+        //< Sprawdzamy czy użytkownik zaznaczył jakieś ćwiczenie
+        if (checked) filename = uniqueTimestamp() + ".json";
+
+        //< Przesył JSONa z pamięci wewnętrznej apki do pamięci zewnętrznej telefonu
         String fileContents;
         try {
             fileContents = deviceData.toString(4);
         } catch (JSONException ignored) {
             fileContents = deviceData.toString();
         }
+
+        dataArray = new JSONArray();
         FileOutputStream outputStream;
 
         File sourceLocation = new File(MainActivity.this.getFilesDir(), filename);
@@ -309,6 +307,26 @@ public class MainActivity extends Activity implements ServiceConnection {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    //< Wyciągamy 4 timestamp z JSONa na potrzeby jego unikalnej nazwy
+    public String uniqueTimestamp() throws JSONException {
+        JSONArray data = deviceData.getJSONArray("data");
+
+        JSONObject object = data.getJSONObject(3);
+
+        String timestamp = object.getString("timestamp");
+
+        StringBuilder stringBuilder = new StringBuilder(timestamp);
+
+        stringBuilder.setCharAt(timestamp.length() - 4, '_');
+
+        return String.valueOf(stringBuilder);
+    }
+
+    //< Funkcja sprawdzająca czy użytkownik zaznaczył jakąś aktywość
+    public void onRadioButtonClicked(View view) {
+        checked = ((RadioButton) view).isChecked();
     }
 }
 
